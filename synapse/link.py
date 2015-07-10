@@ -1,4 +1,5 @@
-from urllib.parse import urlparse, parse_qsl
+#from urllib.parse import urlparse, parse_qsl # py34
+from urlparse import urlparse, parse_qsl # py27
 
 import synapse.links.tcp as s_tcp
 import synapse.links.local as s_local
