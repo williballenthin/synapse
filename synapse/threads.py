@@ -1,6 +1,6 @@
 import os
 import time
-#import queue # py27
+#import queue # py34
 import Queue as queue # py27
 import sched
 import functools
