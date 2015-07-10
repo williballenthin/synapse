@@ -110,7 +110,8 @@ class Sched(EventBus):
     def __init__(self):
         EventBus.__init__(self)
         self.sema = threading.Semaphore()
-        self.sched = sched.scheduler()
+        #self.sched = sched.scheduler() # py34
+        self.sched = sched.scheduler(time.time,time.sleep) # py27
         self.thr = self._runSchedMain()
         self.onfini(self._finiSched)
 
@@ -140,7 +141,10 @@ class Sched(EventBus):
             # woot will be called in 10 seconds..
 
         '''
-        event = self.sched.enter(delay, 1, meth, args, kwargs)
+        # account for py27 lack of kwargs in sched.enter
+        def action():
+            return meth(*args,**kwargs)
+        event = self.sched.enter(delay, 1, action, ())
         self.sema.release()
         return event
 
