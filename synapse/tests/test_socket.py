@@ -8,10 +8,12 @@ class SocketTest(unittest.TestCase):
 
         class Xor(s_socket.SockXform):
             def send(self, byts):
-                return bytes([ b ^ 0x56 for b in byts ])
+                #return bytes([ b ^ 0x56 for b in byts ]) # py34
+                return ''.join([ chr(ord(b) ^ 0x56) for b in byts ]) # py27
 
             def recv(self, byts):
-                return bytes([ b ^ 0x56 for b in byts ])
+                #return bytes([ b ^ 0x56 for b in byts ]) # py34
+                return ''.join([ chr(ord(b) ^ 0x56) for b in byts ]) # py27
 
         lisn = s_socket.listen( ('127.0.0.1',0) )
 
