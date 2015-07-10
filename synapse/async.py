@@ -1,5 +1,6 @@
 import time
-import queue
+#import queue # py34
+import Queue as queue # py27
 import threading
 
 import synapse.common as s_common
