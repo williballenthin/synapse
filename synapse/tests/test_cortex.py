@@ -78,9 +78,12 @@ class CortexTest(unittest.TestCase):
 
     def runrange(self, core):
 
+        id0 = hexlify(guid()).decode('utf8')
+        id1 = hexlify(guid()).decode('utf8')
+
         rows = [
-            (guid(),'rg',10,99),
-            (guid(),'rg',30,99),
+            (id0,'rg',10,99),
+            (id1,'rg',30,99),
         ]
 
         core.addRows( rows )
