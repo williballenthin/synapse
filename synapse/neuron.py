@@ -104,7 +104,7 @@ class Daemon(s_daemon.Daemon):
         if job == None:
             return
 
-        job.jobDone(rtt)
+        job.done(rtt)
 
     def getRsaCertCsr(self, **certinfo):
         '''
@@ -175,7 +175,7 @@ class Daemon(s_daemon.Daemon):
 
         '''
         job = self.jobPingPeer(peerid,timeout=timeout)
-        return job.waitJobReturn(timeout=timeout)
+        return job.sync(timeout=timeout)
 
     def jobPingPeer(self, peerid, timeout=6):
         return self.firePeerMesg(peerid,'ping',time=time.time())
@@ -185,12 +185,7 @@ class Daemon(s_daemon.Daemon):
         Check if the new sock is from a "peersyn" link.
         '''
         sock = event[1].get('sock')
-        #link = sock.getSockInfo('link')
-        #if link == None:
-            #return
-
-        #print('NEU SOCK INIT %r' % (sock,))
-
+        # shall we start a peer handshake?
         if sock.getSockInfo('peer'):
             self._sendPeerSyn(sock)
 
@@ -556,8 +551,8 @@ class Daemon(s_daemon.Daemon):
         job = self.async2sync.initAsyncJob()
 
         msginfo['peer:dst'] = peerid
+        msginfo['peer:job'] = job.jid
         msginfo['peer:src'] = self.ident
-        msginfo['peer:job'] = job.getJobId()
 
         self._sendToPeer( peerid, (name,msginfo) )
         return job

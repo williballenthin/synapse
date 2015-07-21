@@ -4,6 +4,7 @@ from urlparse import urlparse, parse_qsl # py27
 import synapse.links.tcp as s_tcp
 import synapse.links.local as s_local
 
+from synapse.links.common import *
 from synapse.eventbus import EventBus
 
 linkprotos = {
@@ -108,6 +109,10 @@ def chopLinkUrl(url):
             link[1]['authinfo'] = authinfo
 
         authinfo['apikey'] = apikey
+
+    retry = q.pop('retry',None)
+    if retry != None:
+        link[1]['retry'] = int(retry,0)
 
     link[1].update(q)
     return link
