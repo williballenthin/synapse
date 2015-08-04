@@ -106,6 +106,8 @@ class MetaCortex:
         for tag in alltags:
             self.coresbytag[tag].append(core)
 
+        return core
+
     def delCortex(self, name):
         '''
         Remove a given cortex instance by name.
@@ -195,17 +197,27 @@ class MetaCortex:
         if cores == None:
             return ()
 
-        rows = []
+        jobs = []
         for core in cores:
             if by != None:
-                rows.extend( core.getRowsBy(by,prop,valu,limit=limit) )
+                jid = core.callAsyncApi('getRowsBy',by,prop,valu,limit=limit)
+                jobs.append( (core,jid) )
                 continue
 
             if prop == 'id':
-                rows.extend( core.getRowsById(valu) )
+                jid = core.callAsyncApi('getRowsById',valu)
+                jobs.append( (core,jid) )
                 continue
 
-            rows.extend( core.getRowsByProp(prop,**qinfo) )
+            jid = core.callAsyncApi('getRowsByProp',prop,**qinfo)
+            jobs.append( (core,jid) )
+
+        rows = []
+        for core,jid in jobs:
+            try:
+                rows.extend( core.getAsyncReturn(jid) )
+            except Exception as e:
+                traceback.print_exc()
 
         return rows
 
@@ -223,17 +235,27 @@ class MetaCortex:
         if cores == None:
             return []
 
-        rows = []
+        jobs = []
         for core in cores:
             if by != None:
-                rows.extend( core.getJoinBy(by,prop,valu,limit=limit) )
+                jid = core.callAsyncApi('getJoinBy',by,prop,valu,limit=limit)
+                jobs.append( (core,jid) )
                 continue
 
             if prop == 'id':
-                rows.extend( core.getJoinById(valu) )
+                jid = core.callAsyncApi('getJoinById',valu)
+                jobs.append( (core,jid) )
                 continue
 
-            rows.extend( core.getJoinByProp(prop,**qinfo) )
+            jid = core.callAsyncApi('getJoinByProp',prop,**qinfo)
+            jobs.append( (core,jid) )
+
+        rows = []
+        for core,jid in jobs:
+            try:
+                rows.extend( core.getAsyncReturn(jid) )
+            except Exception as e:
+                traceback.print_exc()
 
         return rows
 
@@ -249,18 +271,33 @@ class MetaCortex:
 
         cores = self.coresbytag.get(tag)
         if cores == None:
-            return ()
+            return 0
+
+        jobs = []
+        for core in cores:
+            try:
+                if by != None:
+                    jid = core.callAsyncApi('getSizeBy',by,prop,valu,limit=limit)
+                    jobs.append( (core,jid) )
+                    continue
+
+                if prop == 'id':
+                    jid = core.callAsyncApi('getSizeById',valu)
+                    jobs.append( (core,jid) )
+                    continue
+
+                jid = core.callAsyncApi('getSizeByProp',prop,**qinfo)
+                jobs.append( (core,jid) )
+
+            except Exception as e:
+                traceback.print_exc()
 
         size = 0
-        for core in cores:
-            if by != None:
-                size += core.getSizeBy(by,prop,valu,limit=limit)
-                continue
-
-            if prop == 'id':
-                size += core.getSizeById(valu)
-                continue
-
-            size += core.getJoinByProp(prop,**qinfo)
+        for core,jid in jobs:
+            try:
+                size += core.getAsyncReturn(jid)
+            except Exception as e:
+                # FIXME self.fire('exc')
+                traceback.print_exc()
 
         return size

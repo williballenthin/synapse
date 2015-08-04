@@ -2,10 +2,12 @@ import os
 import binascii
 import unittest
 
+from binascii import hexlify
+
 import synapse.cortex as s_cortex
 
-from binascii import hexlify
 from synapse.common import *
+from synapse.cores.common import NoSuchJob
 
 class CortexTest(unittest.TestCase):
 
@@ -165,12 +167,18 @@ class CortexTest(unittest.TestCase):
         self.assertEqual( len(res), 1 )
 
         res = meta.getRowsByQuery('foo:ha')
+        size = meta.getSizeByQuery('foo:ha')
+        self.assertEqual( size, 2 )
         self.assertEqual( len(res), 2 )
 
         res = meta.getRowsByQuery('foo:x=10')
+        size = meta.getSizeByQuery('foo:x=10')
+        self.assertEqual( size, 2 )
         self.assertEqual( len(res), 2 )
 
         res = meta.getRowsByQuery('foo.baz:x=10')
+        size = meta.getSizeByQuery('foo.baz:x=10')
+        self.assertEqual( size, 1 )
         self.assertEqual( len(res), 1 )
 
         res = meta.getRowsByQuery('foo:x*range=(8,40)')
@@ -180,6 +188,15 @@ class CortexTest(unittest.TestCase):
 
         res = meta.getJoinByQuery('foo:x=10')
         self.assertEqual( len(res), 4 )
+
+        size = meta.getSizeByQuery('newp:newp=3')
+        self.assertEqual( size , 0 )
+
+        rows = meta.getRowsByQuery('newp:newp=3')
+        self.assertEqual( len(rows), 0 )
+
+        join = meta.getJoinByQuery('newp:newp=3')
+        self.assertEqual( len(join), 0 )
 
     def test_cortex_meta_query_parser(self):
         meta = s_cortex.MetaCortex()
@@ -213,3 +230,25 @@ class CortexTest(unittest.TestCase):
         self.assertEqual( qinfo.get('prop'), 'bar' )
         self.assertEqual( qinfo.get('valu'), (10,30) )
         self.assertEqual( qinfo.get('limit'), 100 )
+
+    def test_cortex_async_nosuchjob(self):
+
+        id1 = hexlify(guid()).decode('utf8')
+        core = s_cortex.openurl('ram://')
+        self.assertRaises( NoSuchJob, core.getAsyncReturn, 'foo' )
+
+    def test_cortex_async_result(self):
+        id1 = hexlify(guid()).decode('utf8')
+        core = s_cortex.openurl('ram://')
+
+        rows = [
+            (id1,'foo','bar',30),
+            (id1,'baz','faz1',30),
+            (id1,'gronk',80,30),
+        ]
+        core.addRows( rows )
+        jid = core.callAsyncApi('getRowsById',id1)
+        rows = core.getAsyncReturn(jid)
+
+        self.assertEqual( len(rows), 3 )
+

@@ -7,7 +7,10 @@ import Crypto.PublicKey.RSA as RSA
 import Crypto.Signature.PKCS1_v1_5 as PKCS15
 
 import synapse.async as s_async
+import synapse.cortex as s_cortex
+import synapse.socket as s_socket
 import synapse.daemon as s_daemon
+import synapse.dyndeps as s_dyndeps
 import synapse.threads as s_threads
 import synapse.eventbus as s_eventbus
 
@@ -31,9 +34,8 @@ class Daemon(s_daemon.Daemon):
 
     def __init__(self, statefd=None):
 
-        self.boss       = s_threads.ThreadBoss()
         self.sched      = s_threads.Sched()
-        self.async2sync = s_async.AsyncBoss()
+        self.asyncpool = s_async.AsyncBoss()
 
         self.peerbus = s_eventbus.EventBus()
 
@@ -42,17 +44,23 @@ class Daemon(s_daemon.Daemon):
         self.routecache = {}
 
         # persistant data in these...
-        self.neuinfo = {}
+        self.neuinfo = {
+            'poolsize':10,  # default to 10 neuron threads
+        }
+        self.neucores = {}
+        self.neusocks = {}  # <guid> : NeuSock()
+        self.neushares = {}
 
         self.runinfo = collections.defaultdict(dict)
         self.peerinfo = collections.defaultdict(dict)
 
+        self.metacore = s_cortex.MetaCortex()
+
         s_daemon.Daemon.__init__(self)
 
-        self.onfini( self.boss.fini )
         self.onfini( self.sched.fini )
         self.onfini( self.peerbus.fini )
-        self.onfini( self.async2sync.fini )
+        self.onfini( self.asyncpool.fini )
 
         self.on('link:sock:init',self._onNeuSockInit)
 
@@ -78,10 +86,31 @@ class Daemon(s_daemon.Daemon):
             self.pubkey = self.rsakey.publickey()
             self.pkcs15 = PKCS15.PKCS115_SigScheme( self.rsakey )
 
+        def setauthmod(event):
+            valu = event[1].get('valu')
+            if valu == None:
+                self.setAuthModule(None)
+                return
+
+            name,args,kwargs = valu
+
+            auth = s_dyndeps.getDynLocal(name)(*args,**kwargs)
+            self.setAuthModule( auth )
+
+        def setpoolsize(event):
+            valu = event[1].get('valu')
+            self.asyncpool.setPoolSize(valu)
+
         self.on('neu:info:rsakey', setrsakey)
+        self.on('neu:info:authmod', setauthmod)
+        self.on('neu:info:poolsize',setpoolsize)
 
         if statefd:
             self.loadStateFd(statefd)
+
+        #self._loadNeuAuthModule()
+        self._loadNeuMetaCortex()
+        #self._loadNeuSharedObjects()
 
         # check if we're brand new...
         if self.neuinfo.get('ident') == None:
@@ -89,6 +118,95 @@ class Daemon(s_daemon.Daemon):
             self.setNeuInfo('ident', guid())
 
         self.ident = self.getNeuInfo('ident')
+
+        poolsize = self.getNeuInfo('poolsize')
+        self.asyncpool.setPoolSize(poolsize)
+
+    def addNeuCortex(self, name, url, tags=None):
+        '''
+        Add a "persistent" cortex to the neuron.
+
+        Example:
+
+            neu.addNeuCortex('woot.0','ram:///',tags='hehe,haha')
+
+        '''
+        core = self.metacore.addCortex(name, url, tags=tags)
+        self.addSharedObject('cortex/%s' % (name,), core)
+        self._addNeuCortex(name,url,tags=tags)
+
+    def delNeuCortex(self, name):
+        '''
+        Remove a persistent cortex from the neuron.
+
+        Example:
+
+            neu.delNeuCortex('woot.0')
+
+        Notes:
+
+            * FIXME this takes a restart to take effect
+
+        '''
+        self._delNeuCortex(name)
+
+    def addNeuShare(self, path, name, args, kwargs):
+        '''
+        Add a persistent shared object to the neuron.
+
+        Example:
+
+            neu.addNeuShare
+
+        '''
+        self._loadNeuShare(path,name,args,kwargs)
+        self._addNeuShare(path,name,args,kwargs)
+
+    def delNeuShare(self, path):
+        '''
+        Remove a persistent shared object from the neuron.
+
+        Example:
+
+            neu.delNeuShare('foo')
+
+        '''
+        self.delSharedObject(path)
+        return self._delNeuShare(path)
+
+    def _loadNeuMetaCortex(self):
+        for name,url,tags in self.neucores.values():
+            self.metacore.addCortex(name,url,tags=tags)
+
+    def _loadNeuShares(self):
+        for path,name,args,kwargs in self.neushares.values():
+            try:
+                self._loadNeuShare(path,name,args,kwargs)
+            except Exception as e:
+                print('warning (loading share %s): %s' % (path,e))
+
+    def _loadNeuShare(self, path, name, args, kwargs):
+        func = s_dyndeps.getDynLocal(name)
+        if func == None:
+            raise Exception('No Such Func: %s' % (name,))
+
+        self.addSharedObject( path, func(*args,**kwargs) )
+
+    @keepstate
+    def _addNeuCortex(self, name, url, tags=None):
+        self.neucores[name] = (name,url,tags)
+
+    @keepstate
+    def _delNeuCortex(self, name):
+        self.neucores.pop(name,None)
+
+    @keepstate
+    def _addNeuShare(self, path, name, args, kwargs):
+        self.neushares[path] = (path,name,args,kwargs)
+
+    @keepstate
+    def _delNeuShare(self, path):
+        self.neushares.pop(path,None)
 
     def genRsaKey(self, bits=2048):
         '''
@@ -118,7 +236,7 @@ class Daemon(s_daemon.Daemon):
         sent = event[1].get('time')
         rtt = time.time() - sent
 
-        job = self.async2sync.getAsyncJob(jobid)
+        job = self.asyncpool.getAsyncJob(jobid)
         if job == None:
             return
 
@@ -211,9 +329,9 @@ class Daemon(s_daemon.Daemon):
         sock = event[1].get('sock')
         # shall we start a peer handshake?
         if sock.getSockInfo('peer'):
-            self._sendPeerSyn(sock)
+            self._sendLinkSyn(sock)
 
-    def _sendPeerSyn(self, sock):
+    def _sendLinkSyn(self, sock):
         sock.setSockInfo('neu:link:state','neu:link:syn')
         syninfo = self._getSynInfo()
         sock.fireobj('neu:link:syn',**syninfo)
@@ -454,6 +572,15 @@ class Daemon(s_daemon.Daemon):
         return info.get(prop)
 
     def isKnownPeer(self, peerid):
+        '''
+        Check if we know of a peer with the given id.
+
+        Example:
+
+            if neu.isKnownPeer(peerid):
+                stuff()
+
+        '''
         return self.peerinfo.get(peerid) != None
 
     def _onNeuPeerInit(self, event):
@@ -529,6 +656,9 @@ class Daemon(s_daemon.Daemon):
         Route an neu message to a peer.
         '''
         byts = msgpack.dumps(mesg, use_bin_type=True)
+        self._sendPeerByts(peerid, byts)
+
+    def _sendPeerByts(self, peerid, byts, **msginfo):
 
         route = self._getPeerRoute(peerid)
         if route == None:
@@ -536,9 +666,12 @@ class Daemon(s_daemon.Daemon):
             # FIXME retrans
             return
 
-
         nexthop = route[1]
-        datamesg = ('neu:data',{'route':route,'hop':0,'mesg':byts})
+
+        msginfo['hop'] = 0
+        msginfo['mesg'] = byts
+        msginfo['route'] = route
+        datamesg = ('neu:data',msginfo)
 
         sock = self.peersocks.get(nexthop)
         if sock == None:
@@ -588,7 +721,7 @@ class Daemon(s_daemon.Daemon):
         '''
         Fire an async job wrapped peer message and return the job.
         '''
-        job = self.async2sync.initAsyncJob()
+        job = self.asyncpool.initAsyncJob()
 
         msginfo['peer:dst'] = peerid
         msginfo['peer:job'] = job.jid

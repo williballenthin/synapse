@@ -22,7 +22,8 @@ class AsyncJob(s_eventbus.EventBus):
         self.jid = s_common.guid()
 
         self.boss = boss
-        self.took = None
+        self.info = {}
+
         self.task = None    # (meth,args,kwargs)
 
         self.retval = None
@@ -84,11 +85,11 @@ class AsyncJob(s_eventbus.EventBus):
         try:
             ret = meth(*args,**kwargs)
 
-            self.took = time.time() - stime
+            self.info['took'] = time.time() - stime
             self.done(ret)
 
         except Exception as e:
-            self.took = time.time() - stime
+            self.info['took'] = time.time() - stime
             self.err(e)
 
     def err(self, exc):
@@ -209,6 +210,26 @@ class AsyncBoss(s_eventbus.EventBus):
         self.threads = []
 
         self.addPoolWorkers(pool)
+
+    def setPoolSize(self, pool):
+        '''
+        Update the size of the thread worker pool.
+
+        Example:
+
+            boss.setPoolSize(10)
+
+        '''
+        delta = pool - self.pool
+        if delta == 0:
+            return
+
+        self.pool = pool
+        if delta < 0:
+            self.delPoolWorkers(abs(delta))
+            return
+
+        self.addPoolWorkers(delta)
 
     def addPoolWorkers(self, count):
         '''
