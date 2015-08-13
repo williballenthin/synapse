@@ -75,6 +75,11 @@ def choptag(tag):
     parts = tag.split('.')
     return [ '.'.join(parts[:x+1]) for x in range(len(parts)) ]
 
+def join2tufo(rows):
+    byid = collections.defaultdict(dict)
+    [ byid[r[0]].__setitem__( r[1], r[2] ) for r in rows ]
+    return list(byid.items())
+
 class MetaCortex(EventBus):
 
     def __init__(self):
@@ -200,6 +205,8 @@ class MetaCortex(EventBus):
         ret['tag'] = tag.lower()
         ret['prop'] = prop.lower()
 
+        ret['allow'] = True     # hook eventbus to disallow
+
         return ret
 
     def getRowsByQuery(self, query):
@@ -212,6 +219,10 @@ class MetaCortex(EventBus):
 
         '''
         qinfo = self._parseQuery(query)
+        self.fire('meta:query:rows',query=qinfo)
+
+        if not qinfo.get('allow'):
+            return ()
 
         by = qinfo.pop('by',None)
         tag = qinfo.pop('tag',None)
@@ -219,6 +230,8 @@ class MetaCortex(EventBus):
 
         valu = qinfo.get('valu')
         limit = qinfo.get('limit')
+        mintime = qinfo.get('mintime')
+        maxtime = qinfo.get('maxtime')
 
         cores = self.coresbytag.get(tag)
         if cores == None:
@@ -236,7 +249,7 @@ class MetaCortex(EventBus):
                 jobs.append( (core,jid) )
                 continue
 
-            jid = core.callAsyncApi('getRowsByProp',prop,**qinfo)
+            jid = core.callAsyncApi('getRowsByProp',prop,valu=valu,mintime=mintime,maxtime=maxtime,limit=limit)
             jobs.append( (core,jid) )
 
         rows = []
@@ -258,6 +271,10 @@ class MetaCortex(EventBus):
 
         '''
         qinfo = self._parseQuery(query)
+        self.fire('meta:query:join',query=qinfo)
+
+        if not qinfo.get('allow'):
+            return ()
 
         by = qinfo.pop('by',None)
         tag = qinfo.pop('tag',None)
@@ -265,6 +282,8 @@ class MetaCortex(EventBus):
 
         valu = qinfo.get('valu')
         limit = qinfo.get('limit')
+        mintime = qinfo.get('mintime')
+        maxtime = qinfo.get('maxtime')
 
         cores = self.coresbytag.get(tag)
         if cores == None:
@@ -282,7 +301,7 @@ class MetaCortex(EventBus):
                 jobs.append( (core,jid) )
                 continue
 
-            jid = core.callAsyncApi('getJoinByProp',prop,**qinfo)
+            jid = core.callAsyncApi('getJoinByProp',prop,valu=valu,mintime=mintime,maxtime=maxtime,limit=limit)
             jobs.append( (core,jid) )
 
         rows = []
@@ -304,6 +323,10 @@ class MetaCortex(EventBus):
 
         '''
         qinfo = self._parseQuery(query)
+        self.fire('meta:query:size',query=qinfo)
+
+        if not qinfo.get('allow'):
+            return 0
 
         by = qinfo.pop('by',None)
         tag = qinfo.pop('tag',None)
@@ -311,6 +334,8 @@ class MetaCortex(EventBus):
 
         valu = qinfo.get('valu')
         limit = qinfo.get('limit')
+        mintime = qinfo.get('mintime')
+        maxtime = qinfo.get('maxtime')
 
         cores = self.coresbytag.get(tag)
         if cores == None:
@@ -329,7 +354,7 @@ class MetaCortex(EventBus):
                     jobs.append( (core,jid) )
                     continue
 
-                jid = core.callAsyncApi('getSizeByProp',prop,**qinfo)
+                jid = core.callAsyncApi('getSizeByProp',prop,valu=valu,mintime=mintime,maxtime=maxtime)
                 jobs.append( (core,jid) )
 
             except Exception as e:
@@ -359,9 +384,7 @@ class MetaCortex(EventBus):
         '''
         rows = self.getJoinByQuery(query)
 
-        byid = collections.defaultdict(dict)
-        [ byid[r[0]].__setitem__( r[1], r[2] ) for r in rows ]
-        return list(byid.items())
+        return join2tufo(rows)
 
     def addMetaRows(self, name, rows, async=False):
         '''

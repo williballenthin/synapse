@@ -279,7 +279,7 @@ class CortexTest(unittest.TestCase):
         core.fini()
 
     def test_cortex_async_result(self):
-        id1 = hexlify(guid()).decode('utf8')
+        id1 = guidstr()
         core = s_cortex.openurl('ram://')
 
         rows = [
@@ -346,4 +346,65 @@ class CortexTest(unittest.TestCase):
         meta = s_cortex.MetaCortex()
         self.assertRaises( s_cortex.NoSuchName, meta.addMetaRows, 'hehe', [] )
         meta.fini()
+
+    def test_cortex_meta_query_event(self):
+        meta = s_cortex.MetaCortex()
+        meta.addCortex('foo.bar','ram:///',tags=('woot.hehe',))
+        meta.addCortex('foo.baz','ram:///',tags=('woot.hoho',))
+
+        def metaqueryrows(event):
+            query = event[1].get('query')
+            query['limit'] = 1
+
+        def metaqueryjoin(event):
+            query = event[1].get('query')
+            query['valu'] = 99
+
+        meta.on('meta:query:rows',metaqueryrows)
+        meta.on('meta:query:join',metaqueryjoin)
+
+        id1 = guidstr()
+        id2 = guidstr()
+        rows = [ 
+            (id1,'foo',10,10),
+            (id1,'haha',10,10),
+
+            (id2,'foo',20,20),
+            (id2,'haha',20,20),
+        ]
+        meta.addMetaRows('foo.bar',rows)
+
+        rows = meta.getRowsByQuery('foo:foo')
+        self.assertEqual( len(rows), 1 )
+
+        rows = meta.getJoinByQuery('foo:foo')
+        self.assertEqual( len(rows), 0 )
+
+    def test_cortex_meta_query_perm(self):
+        meta = s_cortex.MetaCortex()
+        meta.addCortex('foo.bar','ram:///',tags=('woot.hehe',))
+        meta.addCortex('foo.baz','ram:///',tags=('woot.hoho',))
+
+        def newp(event):
+            event[1]['query']['allow'] = False
+
+        meta.on('meta:query:rows',newp)
+        meta.on('meta:query:join',newp)
+
+        id1 = guidstr()
+        id2 = guidstr()
+        rows = [ 
+            (id1,'foo',10,10),
+            (id1,'haha',10,10),
+
+            (id2,'foo',20,20),
+            (id2,'haha',20,20),
+        ]
+        meta.addMetaRows('foo.bar',rows)
+
+        rows = meta.getRowsByQuery('foo:foo')
+        self.assertEqual( len(rows), 0 )
+
+        rows = meta.getJoinByQuery('foo:foo')
+        self.assertEqual( len(rows), 0 )
 
