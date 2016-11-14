@@ -117,6 +117,7 @@ class DataModel(s_types.TypeLib):
         self.addSubType('syn:prop','str', regex=r'^([\w]+:)*[\w]+$', lower=1)
         self.addSubType('syn:prop:glob','str', regex=r'^([\w]+:)*[\w]+:\*$', lower=1)
         self.addSubType('syn:type','str', regex=r'^([\w]+:)*[\w]+$', lower=1)
+        self.addSubType('syn:module','str', regex=r'^([\w]+\.)*[\w]+$', lower=1)
 
         self.addTufoForm('syn:form',ptype='syn:prop')
         self.addTufoProp('syn:form','doc',ptype='str', doc='basic form definition')
@@ -142,6 +143,7 @@ class DataModel(s_types.TypeLib):
 
         self.addTufoForm('syn:model',ptype='syn:prop', doc='prefix for all forms within the model')
         self.addTufoForm('syn:model:version', ptype='int', doc='model version for the model loaded in the cortex')
+        self.addTufoForm('syn:model:module', ptype='syn:module', doc='Python module containing module loaded in the cortex')
 
         self.addTufoForm('syn:type',ptype='syn:type')
         self.addTufoProp('syn:type','doc',ptype='str', defval='??', doc='Description for this type')
