@@ -1920,7 +1920,6 @@ class Cortex(EventBus,DataModel,ConfigMixin):
         return self.getTufosBy('range', prop, (ipv4addr, ipv4addr+mask), limit=limit)
 
     #############################################################
-<<<<<<< HEAD
     # support typelib persistence
     #############################################################
 
