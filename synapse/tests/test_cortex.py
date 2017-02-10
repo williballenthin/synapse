@@ -193,7 +193,7 @@ class CortexTest(SynTest):
 
         self.assertEqual( core.getSizeBy('range','rg',(0,20)), 1 )
         self.assertEqual( core.getRowsBy('range','rg',(0,20))[0][2], 10 )
-        
+
         # range is inclusive of `min`, exclusive of `max`
         self.assertEqual( core.getSizeBy('range','rg',(9,11)), 1 )
         self.assertEqual( core.getSizeBy('range','rg',(10,12)), 1 )
@@ -1227,4 +1227,13 @@ class CortexTest(SynTest):
             self.assertIsNotNone( core.getTufoByProp('syn:type', 'foo:bar') )
             self.assertIsNotNone( core.getTufoByProp('syn:form', 'foo:baz') )
             self.assertIsNotNone( core.getTufoByProp('syn:prop', 'foo:baz:faz') )
+
+    def test_cortex_tlib_persistence2(self):
+        with self.getTestDir() as path:
+            dbfile = genpath(path,'core.db')
+            with s_cortex.openurl('ram:///' + dbfile) as core:
+                tuf0 = core.formTufoByProp('inet:fqdn','woot.com')
+
+            with s_cortex.openurl('ram:///' + dbfile) as core:
+                core.getTufoByProp('inet:fqdn', 'woot.com')
 
