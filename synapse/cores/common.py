@@ -249,8 +249,34 @@ class Cortex(EventBus,DataModel,Runtime,Configable):
         self.addDataModels(mofos)
 
     def _loadCoreModel(self):
+        failed = []
         for item in self.getTufosByProp('syn:type'):
-            self._initTypeTufo(item)
+            try:
+                if not self._initTypeTufo(item):
+                    logger.warning('failed to add type: ' + item[1].get('syn:type'))
+                    failed.append(item)
+                else:
+                    logger.debug('added type: ' + item[1].get('syn:type'))
+            except DupTypeName:
+                logger.warning('already added type: ' + item[1].get('syn:type'))
+
+
+        while failed:
+            logger.debug('adding failed types')
+            nfailed = []
+            for item in failed:
+                try:
+                    if not self._initTypeTufo(item):
+                        logger.warning('failed to add type: ' + item[1].get('syn:type'))
+                        nfailed.append(item)
+                    else:
+                        logger.debug('added type: ' + item[1].get('syn:type'))
+                except DupTypeName:
+                    logger.warning('already added type: ' + item[1].get('syn:type'))
+            if len(failed) == len(nfailed):
+                raise RuntimeError('failed to add types: ' + str(failed))
+            failed = nfailed
+        logger.debug('loaded all types.')
 
         for item in self.getTufosByProp('syn:form'):
             self._initFormTufo(item)
@@ -2145,7 +2171,7 @@ class Cortex(EventBus,DataModel,Runtime,Configable):
         name = tufo[1].get('syn:type')
         info = s_tufo.props(tufo)
 
-        self.addType(name,**info)
+        return self.addType(name,**info)
 
     def _initFormTufo(self, tufo):
         '''
@@ -2154,7 +2180,7 @@ class Cortex(EventBus,DataModel,Runtime,Configable):
         name = tufo[1].get('syn:form')
         info = s_tufo.props(tufo)
         # add the tufo definition to the DataModel
-        self.addTufoForm(name,**info)
+        return self.addTufoForm(name,**info)
 
     def _initPropTufo(self, tufo):
         '''
@@ -2166,8 +2192,7 @@ class Cortex(EventBus,DataModel,Runtime,Configable):
         form = info.pop('form')
         prop = name[len(form)+1:]
 
-        self.addTufoProp(form, prop, **info)
-        return
+        return self.addTufoProp(form, prop, **info)
 
     def _tufosByIn(self, prop, valus, limit=None):
         ret = []
