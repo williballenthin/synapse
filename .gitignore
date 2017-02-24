@@ -48,6 +48,7 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *,cover
+cover/
 
 # Translations
 *.mo
@@ -64,3 +65,13 @@ target/
 
 # pyvenv
 venv
+
+# pyenv
+.python-version
+
+# PyCharm files.
+.idea/
+
+# vim
+*.swo
+*.swp

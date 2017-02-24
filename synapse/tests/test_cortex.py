@@ -1,16 +1,22 @@
+from __future__ import absolute_import,unicode_literals
 
-import os
 import time
 import binascii
+import os
+import tempfile
+import time
 import unittest
 
-import synapse.link as s_link
-import synapse.compat as s_compat
 import synapse.common as s_common
+import synapse.compat as s_compat
 import synapse.cortex as s_cortex
+import synapse.daemon as s_daemon
+import synapse.link as s_link
+import synapse.telepath as s_telepath
 
 import synapse.lib.tags as s_tags
 import synapse.lib.types as s_types
+import synapse.lib.threads as s_threads
 
 import synapse.models.syn as s_models_syn
 
@@ -229,6 +235,11 @@ class CortexTest(SynTest):
 
             self.assertEqual( item['foo']['blah'][0], 99 )
 
+    def test_pg_encoding(self):
+        with self.getPgCore() as core:
+            res = core.select('SHOW SERVER_ENCODING')[0][0]
+            self.eq(res, 'UTF8')
+
     def test_cortex_choptag(self):
         t0 = tuple(s_cortex.choptag('foo'))
         t1 = tuple(s_cortex.choptag('foo.bar'))
@@ -259,17 +270,17 @@ class CortexTest(SynTest):
         # BY CIDR
         tlib = s_types.TypeLib()
 
-        ipint = tlib.getTypeParse('inet:ipv4', '192.168.0.1')
+        ipint,_ = tlib.getTypeParse('inet:ipv4', '192.168.0.1')
         ipa = core.formTufoByProp('inet:ipv4', ipint)
-        ipint = tlib.getTypeParse('inet:ipv4', '192.168.255.254')
+        ipint,_ = tlib.getTypeParse('inet:ipv4', '192.168.255.254')
         ipa = core.formTufoByProp('inet:ipv4', ipint)
 
-        ipint = tlib.getTypeParse('inet:ipv4', '192.167.255.254')
+        ipint,_ = tlib.getTypeParse('inet:ipv4', '192.167.255.254')
         ipb = core.formTufoByProp('inet:ipv4', ipint)
 
         ips = ['10.2.1.%d' % d for d in range(1,33)]
         for ip in ips:
-            ipint = tlib.getTypeParse('inet:ipv4', ip)
+            ipint,_ = tlib.getTypeParse('inet:ipv4', ip)
             ipc = core.formTufoByProp('inet:ipv4', ipint)
 
         self.assertEqual( len(core.getTufosBy('inet:cidr', 'inet:ipv4', '10.2.1.4/32')), 1)
@@ -498,19 +509,21 @@ class CortexTest(SynTest):
         core = s_cortex.openurl('ram://')
         core.addRows(rows)
 
-        self.assertEqual( core.getStatByProp('sum','foo:bar'), 53 )
-        self.assertEqual( core.getStatByProp('count','foo:bar'), 7 )
+        self.eq( core.getStatByProp('sum','foo:bar'), 53 )
+        self.eq( core.getStatByProp('count','foo:bar'), 7 )
 
-        self.assertEqual( core.getStatByProp('min','foo:bar'), 1 )
-        self.assertEqual( core.getStatByProp('max','foo:bar'), 21 )
+        self.eq( core.getStatByProp('min','foo:bar'), 1 )
+        self.eq( core.getStatByProp('max','foo:bar'), 21 )
 
-        self.assertEqual( core.getStatByProp('average','foo:bar'), 7.571428571428571 )
+        self.eq( core.getStatByProp('mean','foo:bar'), 7.571428571428571 )
 
-        self.assertEqual( core.getStatByProp('any','foo:bar'), True)
-        self.assertEqual( core.getStatByProp('all','foo:bar'), True)
+        self.eq( core.getStatByProp('any','foo:bar'), 1)
+        self.eq( core.getStatByProp('all','foo:bar'), 1)
 
         histo = core.getStatByProp('histo','foo:bar')
-        self.assertEqual( histo.get(13), 1 )
+        self.eq( histo.get(13), 1 )
+
+        self.assertRaises( NoSuchStat, core.getStatByProp, 'derp', 'inet:ipv4' )
 
     def test_cortex_fire_set(self):
 
@@ -1141,12 +1154,12 @@ class CortexTest(SynTest):
                 core.formTufoByProp('syn:type','foo',subof='bar')
                 core.formTufoByProp('syn:type','bar',ctor='synapse.tests.test_cortex.FakeType')
 
-                self.assertEqual( core.getTypeParse('foo','30'), 30 )
-                self.assertEqual( core.getTypeParse('bar','30'), 30 )
+                self.assertEqual( core.getTypeParse('foo','30')[0], 30 )
+                self.assertEqual( core.getTypeParse('bar','30')[0], 30 )
 
             with s_cortex.openurl('ram://',savefile=savefile) as core:
-                self.assertEqual( core.getTypeParse('foo','30'), 30 )
-                self.assertEqual( core.getTypeParse('bar','30'), 30 )
+                self.assertEqual( core.getTypeParse('foo','30')[0], 30 )
+                self.assertEqual( core.getTypeParse('bar','30')[0], 30 )
 
     def test_cortex_syncfd(self):
         with self.getTestDir() as path:
@@ -1180,7 +1193,6 @@ class CortexTest(SynTest):
             core.addDataModel('a.foo.module',
                 {
                     'prefix':'foo',
-                    'version':201612201147,
 
                     'types':(
                         ('foo:bar',{'subof':'str:lwr'}),
@@ -1192,6 +1204,15 @@ class CortexTest(SynTest):
                         ]),
                     ),
                 })
+
+            tyfo = core.getTufoByProp('syn:type','foo:bar')
+            self.eq( tyfo[1].get('syn:type:subof'), 'str:lwr' )
+
+            fofo = core.getTufoByProp('syn:form','foo:baz')
+            self.eq( fofo[1].get('syn:form:ptype'),'foo:bar' )
+
+            pofo = core.getTufoByProp('syn:prop','foo:baz:faz')
+            self.eq( pofo[1].get('syn:prop:ptype'),'str:lwr' )
 
             tuf0 = core.formTufoByFrob('foo:baz', 'AAA', faz='BBB')
             self.eq( tuf0[1].get('foo:baz'), 'aaa' )
@@ -1237,3 +1258,83 @@ class CortexTest(SynTest):
             with s_cortex.openurl('ram:///' + dbfile) as core:
                 core.getTufoByProp('inet:fqdn', 'woot.com')
 
+    def test_cortex_syncpump(self):
+
+        with s_cortex.openurl('ram://') as core0:
+
+            with s_cortex.openurl('ram://') as core1:
+
+                with core0.getSyncPump(core1):
+                    core0.formTufoByProp('inet:fqdn','woot.com')
+
+                self.assertIsNotNone( core1.getTufoByProp('inet:fqdn','woot.com') )
+
+    def test_cortex_xact_deadlock(self):
+        N = 100
+        prop = 'testform'
+        fd = tempfile.NamedTemporaryFile()
+        dmon = s_daemon.Daemon()
+        pool = s_threads.Pool(size=4, maxsize=8)
+        wait = s_eventbus.Waiter(pool, 1, 'pool:work:fini')
+
+        with s_cortex.openurl('sqlite:///%s' % fd.name) as core:
+
+            def populate():
+                for i in range(N):
+                    #print('wrote %d tufos' % i)
+                    core.formTufoByProp(prop, str(i), **{})
+
+            dmon.share('core', core)
+            link = dmon.listen('tcp://127.0.0.1:0/core')
+            prox = s_telepath.openurl('tcp://127.0.0.1:%d/core' % link[1]['port'])
+
+            pool.wrap(populate)()
+            for i in range(N):
+                tufos = prox.getTufosByProp(prop)
+                #print('got %d tufos' % len(tufos))
+
+            wait.wait()
+            pool.fini()
+
+    def test_coretex_logging(self):
+
+        with s_cortex.openurl('ram:///') as core:
+            core.setConfOpt('log:save',1)
+
+            try:
+                raise NoSuchPath(path='foo/bar')
+            except NoSuchPath as exc:
+                core.logCoreExc(exc,subsys='hehe')
+
+            tufo = core.getTufoByProp('syn:log:subsys',valu='hehe')
+
+            self.eq( tufo[1].get('syn:log:subsys'), 'hehe' )
+            self.eq( tufo[1].get('syn:log:exc'), 'synapse.exc.NoSuchPath' )
+            self.eq( tufo[1].get('syn:log:info:path'), 'foo/bar' )
+
+            self.assertIsNotNone( tufo[1].get('syn:log:time') )
+
+            core.setConfOpt('log:level', logging.ERROR)
+
+            try:
+                raise NoSuchPath(path='foo/bar')
+            except NoSuchPath as exc:
+                core.logCoreExc(exc,subsys='haha', level=logging.WARNING)
+
+            self.assertIsNone( core.getTufoByProp('syn:log:subsys', valu='haha') )
+
+    def test_cortex_seed(self):
+
+        with s_cortex.openurl('ram:///') as core:
+
+            def seedFooBar(prop,valu,**props):
+                return core.formTufoByProp('inet:fqdn',valu,**props)
+
+            core.addSeedCtor('foo:bar', seedFooBar)
+            tufo = core.formTufoByProp('foo:bar','woot.com')
+            self.eq( tufo[1].get('inet:fqdn'), 'woot.com' )
+
+    def test_cortex_bytype(self):
+        with s_cortex.openurl('ram:///') as core:
+            core.formTufoByProp('inet:dns:a','woot.com/1.2.3.4')
+            self.eq( len( core.eval('inet:ipv4*type="1.2.3.4"')), 2 )

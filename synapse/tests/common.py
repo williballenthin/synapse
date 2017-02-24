@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.WARNING)
 import synapse.cortex as s_cortex
 import synapse.eventbus as s_eventbus
 
+import synapse.lib.ingest as s_ingest
 import synapse.lib.output as s_output
 import synapse.lib.thishost as s_thishost
 
@@ -58,6 +59,10 @@ class SynTest(unittest.TestCase):
     def getTestWait(self, bus, size, *evts):
         return s_eventbus.Waiter(bus, size, *evts)
 
+    def skipIfNoInternet(self):
+        if os.getenv('SYN_TEST_NO_INTERNET'):
+            raise unittest.SkipTest('no internet access')
+
     def getPgCore(self):
         url = os.getenv('SYN_TEST_PG_URL')
         if url != None:
@@ -72,8 +77,8 @@ class SynTest(unittest.TestCase):
         core = s_cortex.openurl('postgres:///%s/%s' % (db,table))
 
         def droptable():
-            with core.cursor() as c:
-                c.execute('DROP TABLE %s' % (table,))
+            with core.getCoreXact() as xact:
+                xact.cursor.execute('DROP TABLE %s' % (table,))
 
         core.onfini(droptable)
         return core
@@ -100,6 +105,9 @@ class SynTest(unittest.TestCase):
     def eq(self, x, y):
         self.assertEqual(x,y)
 
+    def ne(self, x, y):
+        self.assertNotEqual(x,y)
+
     def true(self, x):
         self.assertTrue(x)
 
@@ -109,9 +117,22 @@ class SynTest(unittest.TestCase):
     def nn(self, x):
         self.assertIsNotNone(x)
 
+    def none(self, x):
+        self.assertIsNone(x)
+
     def sorteq(self, x, y):
         return self.eq( sorted(x), sorted(y) )
 
 testdir = os.path.dirname(__file__)
 def getTestPath(*paths):
     return os.path.join(testdir,*paths)
+
+def getIngestCore(path, core=None):
+    if core == None:
+        core = s_cortex.openurl('ram:///')
+
+    gest = s_ingest.loadfile(path)
+    with core.getCoreXact() as xact:
+        gest.ingest(core)
+
+    return core
