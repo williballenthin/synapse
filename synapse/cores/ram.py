@@ -1,9 +1,19 @@
 import collections
-import synapse.cores.common as common
+
+import synapse.cores.common as s_cores_common
 
 from synapse.compat import isint,intern
 
-class Cortex(common.Cortex):
+class CoreXact(s_cores_common.CoreXact):
+
+    # Ram Cortex fakes out the idea of xact...
+    def _coreXactBegin(self):
+        pass
+
+    def _coreXactCommit(self):
+        pass
+
+class Cortex(s_cores_common.Cortex):
 
     def _initCortex(self):
         self.rowsbyid = collections.defaultdict(set)
@@ -28,15 +38,18 @@ class Cortex(common.Cortex):
         self.initSizeBy('range',self._sizeByRange)
         self.initRowsBy('range',self._rowsByRange)
 
+    def _getCoreXact(self, size=None):
+        return CoreXact(self, size=size)
+
     def _tufosByGe(self, prop, valu, limit=None):
         # FIXME sortedcontainers optimizations go here
-        valu = self.getPropFrob(prop,valu)
+        valu,_ = self.getPropFrob(prop,valu)
         rows = self._rowsByGe(prop, valu, limit=limit)
         return self.getTufosByIdens([ r[0] for r in rows ])
 
     def _tufosByLe(self, prop, valu, limit=None):
         # FIXME sortedcontainers optimizations go here
-        valu = self.getPropFrob(prop,valu)
+        valu,_ = self.getPropFrob(prop,valu)
         rows = self._rowsByLe(prop, valu, limit=limit)
         return self.getTufosByIdens([ r[0] for r in rows ])
 
@@ -125,7 +138,7 @@ class Cortex(common.Cortex):
 
             yield row
 
-            c +=1 
+            c +=1
             if limit != None and c >= limit:
                 break
 

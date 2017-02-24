@@ -3,6 +3,7 @@ from __future__ import absolute_import,unicode_literals
 import re
 import json
 import base64
+import hashlib
 import logging
 import collections
 
@@ -45,12 +46,6 @@ class DataType:
         '''
         return self.subprops
 
-    def chop(self, valu):
-        '''
-        Returns a tuple of (norm,subs) for the given valu.
-        '''
-        return self.norm(valu),{}
-
     def extend(self, name, **info):
         '''
         Construct a new subtype from this instance.
@@ -88,7 +83,7 @@ class DataType:
         return self.norm(text, oldval=oldval)
 
     def repr(self, valu):
-        return str(valu)
+        return valu
 
 class StrType(DataType):
 
@@ -98,6 +93,7 @@ class StrType(DataType):
         self.regex = None
         self.envals = None
         self.restrip = None
+        self.frobintfmt = None
 
         self.nullval = info.get('nullval')
 
@@ -113,6 +109,15 @@ class StrType(DataType):
         if restrip != None:
             self.restrip = re.compile(restrip)
 
+        frobintfmt = info.get('frob_int_fmt')
+        if frobintfmt != None:
+            self.frobintfmt = frobintfmt
+
+    def frob(self, valu, oldval=None):
+        if self.frobintfmt and s_compat.isint(valu):
+                valu = self.frobintfmt % valu
+        return self.norm(valu, oldval=oldval)
+
     def norm(self, valu, oldval=None):
 
         if not s_compat.isstr(valu):
@@ -122,7 +127,7 @@ class StrType(DataType):
             valu = valu.lower()
 
         if valu == self.nullval:
-            return valu
+            return valu,{}
 
         if self.envals != None and valu not in self.envals:
             self._raiseBadValu(valu,enums=self.info.get('enums'))
@@ -130,7 +135,7 @@ class StrType(DataType):
         if self.regex != None and not self.regex.match(valu):
             self._raiseBadValu(valu,regex=self.info.get('regex'))
 
-        return valu
+        return valu,{}
 
     def parse(self, text, oldval=None):
         if self.restrip:
@@ -138,6 +143,19 @@ class StrType(DataType):
 
         return self.norm(text, oldval=oldval)
 
+class JsonType(DataType):
+
+    def frob(self, valu, oldval=None):
+        if not s_compat.isstr(valu):
+            return json.dumps(valu,separators=(',', ':')),{}
+
+        return self.norm(valu,oldval=None)
+
+    def norm(self, valu, oldval=None):
+        try:
+            return json.dumps( json.loads(valu), separators=(',', ':') ),{}
+        except Exception as e:
+            self._raiseBadValu(valu)
 
 class IntType(DataType):
 
@@ -179,7 +197,7 @@ class IntType(DataType):
         if self.maxval != None and valu > self.maxval:
             self._raiseBadValu(valu,maxval=self.maxval)
 
-        return valu
+        return valu,{}
 
     def parse(self, valu, oldval=None):
         try:
@@ -191,7 +209,7 @@ class IntType(DataType):
 
     def frob(self, valu, oldval=None):
         if s_compat.isstr(valu):
-            valu = self.parse(valu, oldval=oldval)
+            valu,_ = self.parse(valu, oldval=oldval)
         return self.norm(valu, oldval=oldval)
 
 def enMsgB64(item):
@@ -246,52 +264,23 @@ class CompType(DataType):
                     self.subprops.append( tufo(subn,**subp[1]) )
 
     def norm(self, valu, oldval=None):
-        # NOTE: handles both b64 blob *and* (text,text,text) list/tuple.
+        '''handles both b64 blob *and* (text,text,text) list/tuple.'''
         if islist(valu):
             vals = valu
         else:
             vals = deMsgB64(valu)
 
-        norms = [ t.norm(v) for v,(n,t) in self._zipvals(vals) ]
-        return enMsgB64(norms)
-
-    def chop(self, valu):
-        # NOTE: handles both b64 blob *and* (text,text,text) list/tuple.
-        if islist(valu):
-            vals = valu
-        else:
-            vals = deMsgB64(valu)
-
-        subs = {}
-        norms = []
-
+        norms,subs = [], {}
         for v,(name,tobj) in self._zipvals(vals):
 
-            nval,nsub = tobj.chop(v)
+            nval,nsub = tobj.norm(v)
             norms.append(nval)
-
             subs[name] = nval
+
             for subn,subv in nsub.items():
                 subs['%s:%s' % (name,subn)] = subv
 
         return enMsgB64(norms),subs
-
-    def repr(self, valu):
-        vals = deMsgB64(valu)
-        reps = [ t.repr(v) for v,(n,t) in self._zipvals(vals) ]
-        return json.dumps(reps,separators=jsseps)
-
-    def parse(self, text, oldval=None):
-
-        # NOTE: handles both text *and* (text,text,text) list/tuple.
-
-        if islist(text):
-            reps = text
-        else:
-            reps = json.loads(text)
-
-        vals = [ t.parse(r) for r,(n,t) in self._zipvals(reps) ]
-        return enMsgB64(vals)
 
     def frob(self, valu, oldval=None):
         if islist(valu):
@@ -299,8 +288,34 @@ class CompType(DataType):
         else:
             vals = deMsgB64(valu)
 
-        frobs = [ t.frob(v) for v,(n,t) in self._zipvals(vals) ]
-        return enMsgB64(frobs)
+        frobs,subs = [], {}
+        for v,(name,tobj) in self._zipvals(vals):
+
+            nval,nsub = tobj.frob(v)
+            frobs.append(nval)
+
+            subs[name] = nval
+            for subn,subv in nsub.items():
+                subs['%s:%s' % (name,subn)] = subv
+
+        return enMsgB64(frobs),subs
+
+    def repr(self, valu):
+        vals = deMsgB64(valu)
+        reps = [ t.repr(v) for v,(n,t) in self._zipvals(vals) ]
+        return json.dumps(reps,separators=jsseps)
+
+    def parse(self, text, oldval=None):
+        '''handles both text *and* (text,text,text) list/tuple.'''
+
+        if islist(text):
+            reps = text
+        else:
+            reps = json.loads(text)
+
+        vals = [ t.parse(r)[0] for r,(n,t) in self._zipvals(reps) ]
+        return enMsgB64(vals),{}
+
 
     def _zipvals(self, vals):
         return s_compat.iterzip(vals,self.fields)
@@ -310,52 +325,20 @@ class SeprType(CompType):
     def __init__(self, tlib, name, **info):
         CompType.__init__(self, tlib, name, **info)
         self.sepr = info.get('sep',',')
-        self.lower = info.get('lower',0)
         self.reverse = info.get('reverse',0)
 
     def norm(self, valu, oldval=None):
-        reprs = []
-
-        if self.lower:
-            valu = valu.lower()
-
-        if self.reverse:
-            parts = valu.rsplit(self.sepr,len(self.fields)-1)
-        else:
-            parts = valu.split(self.sepr,len(self.fields)-1)
-
-        for part,(name,tobj) in self._zipvals(parts):
-            if tobj == self:
-                # do not recursively norm
-                reprs.append(part)
-            else:
-                reprs.append( tobj.repr(tobj.parse(part)) )
-        return self.sepr.join(reprs)
-
-    def repr(self, valu):
-        return valu
-
-    def chop(self, valu):
         subs = {}
-        if self.reverse:
-            parts = valu.rsplit(self.sepr,len(self.fields)-1)
-        else:
-            parts = valu.split(self.sepr,len(self.fields)-1)
-
-        if self.lower:
-            valu = valu.lower()
-
         reprs = []
+        parts = self._split_str(valu)
 
         for part,(name,tobj) in self._zipvals(parts):
 
             if tobj == self:
-                # do not recursively chop
-                norm, nsub = part, {}
+                norm,nsub = part, {}
                 reprs.append(norm)
             else:
-                norm = tobj.parse(part)
-                norm,nsub = tobj.chop(norm)
+                norm,nsub = tobj.parse(part)
                 reprs.append(tobj.repr(norm))
 
             subs[name] = norm
@@ -364,11 +347,42 @@ class SeprType(CompType):
 
         return self.sepr.join(reprs),subs
 
-    def parse(self, text, oldval=None):
-        return self.norm(text,oldval=oldval)
-
     def frob(self, valu, oldval=None):
-        return self.norm(valu, oldval=oldval)
+        subs = {}
+        reprs = []
+        if not islist(valu):
+            parts = self._split_str(valu)
+        else:
+            parts = valu
+
+        for part,(name,tobj) in self._zipvals(parts):
+            if tobj == self:
+                norm, nsub = part, {}
+                reprs.append(norm)
+            else:
+                frob,nsub = tobj.frob(part)
+                reprs.append(tobj.repr(frob))
+
+            subs[name] = frob
+            for subn,subv in nsub.items():
+                subs['%s:%s' % (name,subn)] = subv
+
+        return self.sepr.join(reprs),subs
+
+    def parse(self, text, oldval=None):
+        return self.norm(text, oldval=None)
+
+    def repr(self, valu, oldval=None):
+        return valu
+
+    def _split_str(self, text):
+
+        if self.reverse:
+            parts = text.rsplit(self.sepr,len(self.fields)-1)
+        else:
+            parts = text.split(self.sepr,len(self.fields)-1)
+
+        return parts
 
     def _zipvals(self, vals):
         return s_compat.iterzip(vals,self.fields)
@@ -376,7 +390,7 @@ class SeprType(CompType):
 class BoolType(DataType):
 
     def norm(self, valu, oldval=None):
-        return int(bool(valu))
+        return int(bool(valu)),{}
 
     def repr(self, valu):
         return repr(bool(valu))
@@ -384,10 +398,10 @@ class BoolType(DataType):
     def parse(self, text, oldval=None):
         text = text.lower()
         if text in ('true','t','y','yes','1','on'):
-            return 1
+            return 1,{}
 
         if text in ('false','f','n','no','0','off'):
-            return 0
+            return 0,{}
 
         self._raiseBadValu(text)
 
@@ -402,6 +416,7 @@ class TypeLib:
     '''
     def __init__(self, load=True):
         self.types = {}
+        self.casts = {}
         self.typeinfo = {}
         self.typetree = {}
         self.subscache = {}
@@ -413,6 +428,7 @@ class TypeLib:
         self.addType('str',ctor='synapse.lib.types.StrType', doc='The base string type')
         self.addType('int',ctor='synapse.lib.types.IntType', doc='The base integer type')
         self.addType('bool',ctor='synapse.lib.types.BoolType', doc='A boolean type')
+        self.addType('json',ctor='synapse.lib.types.JsonType', doc='A json type (stored as str)')
 
         self.addType('comp',ctor='synapse.lib.types.CompType', doc='A multi-field composite type which uses base64 encoded msgpack')
         self.addType('sepr',ctor='synapse.lib.types.SeprType', doc='A multi-field composite type which uses separated repr values')
@@ -430,9 +446,15 @@ class TypeLib:
 
         self.addType('str:lwr', subof='str', lower=1)
         self.addType('str:txt', subof='str', doc='Multi-line text or text blob.')
+        self.addType('str:hex', subof='str', frob_int_fmt='%x', regex=r'^[0-9a-f]+$', lower=1)
+
+        self.addTypeCast('make:guid', self._castMakeGuid )
 
         if load:
             self.loadModModels()
+
+    def _castMakeGuid(self, valu):
+        return hashlib.md5(valu.encode('utf8')).hexdigest()
 
     def getTypeInst(self, name):
         '''
@@ -551,7 +573,7 @@ class TypeLib:
                 return True
 
             except Exception as e:
-                logger.warning('failed to ctor type %s', name)
+                logger.warning('failed to ctor type %s', name, exc_info=True)
                 logger.debug('failed to ctor type %s', name, exc_info=True)
                 self.typeinfo.pop(name,None)
         try:
@@ -604,7 +626,7 @@ class TypeLib:
 
         Example:
 
-            fqdn = tlib.getTypeNorm('inet:fqdn','Foo.Com')
+            fqdn,subs = tlib.getTypeNorm('inet:fqdn','Foo.Com')
 
         '''
         return self.reqDataType(name).norm(valu, oldval=oldval)
@@ -616,13 +638,33 @@ class TypeLib:
 
         Example:
 
-            valu = tlib.getTypeFrob('inet:ipv4',valu)
+            valu,subs = tlib.getTypeFrob('inet:ipv4',valu)
 
         '''
         return self.reqDataType(name).frob(valu, oldval=oldval)
 
-    def getTypeChop(self, name, valu):
-        return self.reqDataType(name).chop(valu)
+    def getTypeCast(self, name, valu):
+        '''
+        Use either a type or a registered "cast" name to normalize
+        the given input.
+
+        Example:
+
+            valu = tlib.getTypeCast("foo:bar","hehe")
+
+        '''
+        func = self.casts.get(name)
+        if func != None:
+            return func(valu)
+
+        return self.getTypeNorm(name,valu)[0]
+
+    def addTypeCast(self, name, func):
+        '''
+        Add a "cast" function to do normalization without
+        creating a complete type.
+        '''
+        self.casts[name] = func
 
     def getTypeRepr(self, name, valu):
         '''
@@ -641,7 +683,7 @@ class TypeLib:
 
         Example:
 
-            ipv4 = tlib.getTypeParse('inet:ipv4','1.2.3.4')
+            ipv4,subs = tlib.getTypeParse('inet:ipv4','1.2.3.4')
 
         '''
         return self.reqDataType(name).parse(text)

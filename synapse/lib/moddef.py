@@ -132,7 +132,7 @@ def getModDefSrc(moddef):
     fmt = moddef[1].get('fmt')
     path = moddef[1].get('path')
 
-    if fmt == 'src' and path != None:
+    if fmt == 'src' and path != None and os.path.isfile(path):
         with open(path,'r') as fd:
             return fd.read()
 
@@ -145,6 +145,9 @@ def getModDefCode(moddef):
 
     path = moddef[1].get('path')
     modsrc = getModDefSrc(moddef)
+    if modsrc == None:
+        return None
+
     return compile(modsrc,path,'exec')
 
 def getCallModDef(func):
@@ -291,7 +294,8 @@ def getSiteDeps(moddef):
         moddef = todo.popleft()
         modname = moddef[0]
 
-        if modname in siteskip:
+        topname = modname.split('.')[0]
+        if topname in siteskip:
             continue
 
         if deps.get(modname):

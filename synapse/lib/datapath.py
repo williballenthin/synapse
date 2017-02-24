@@ -1,93 +1,283 @@
-#class BackPath: pass
-#backpath = BackPath()
-
 import collections
 
-class PathDict(collections.defaultdict):
-    def __init__(self, onmiss):
-        collections.defaultdict.__init__(self)
-        self.onmiss = onmiss
+import xml.etree.ElementTree as x_etree
 
-    def __missing__(self, key):
-        return self.onmiss(key)
+import synapse.compat as s_compat
+import synapse.lib.syntax as s_syntax
 
-class DataPath:
+class DataElem:
 
-    def __init__(self, item, parent=None):
+    def __init__(self, item, name=None, parent=None):
+        self._d_name = name
         self._d_item = item
-        self._d_kids = PathDict( self._getItemElem )
-        self._d_kids[-1] = parent
+        self._d_parent = parent
+        self._d_special = {'..':parent,'.':self}
 
-    def _getItemElem(self, elem):
+    def _elem_valu(self):
+        return self._d_item
+
+    def _elem_step(self, step):
         try:
-            return DataPath(self._d_item[elem],parent=self)
-        except KeyError as e:
+            item = self._d_item[step]
+        except Exception as e:
+            return None
+        return initelem(item,name=step,parent=self)
+
+    def name(self):
+        return self._d_name
+
+    def _elem_kids(self, step):
+        # Most primitives only have 1 child at a given step...
+        # However, we must handle the case of nested children
+        # during this form of iteration to account for constructs
+        # like XML/HTML ( See XmlDataElem )
+        try:
+            item = self._d_item[step]
+        except Exception as e:
+            return
+
+        yield initelem(item,name=step,parent=self)
+
+    def step(self, path):
+        '''
+        Step to the given DataElem within the tree.
+        '''
+        base = self
+        for step in self._parse_path(path):
+
+            spec = base._d_special.get(step)
+            if spec != None:
+                base = spec
+                continue
+
+            base = base._elem_step(step)
+            if base == None:
+                return None
+
+        return base
+
+    def valu(self, path):
+        '''
+        Return the value of the element at the given path.
+        '''
+        if not path:
+            return self._elem_valu()
+
+        elem = self.step(path)
+        if elem == None:
             return None
 
-    def walk(self, *path):
+        return elem._elem_valu()
+
+    def vals(self, path):
         '''
-        Return a data path element by walking down they given keys.
+        Iterate the given path elements and yield values.
 
         Example:
 
-            item = { 'foo':[ {'bar':10},{'baz':20} ], 'hur':'dur' }
+            data = { 'foo':[ {'bar':'lol'}, {'bar':'heh'} ] }
 
-            data = DataPath(item)
-            bazdata = data.walk('foo', 1)
+            root = s_datapath.initelem(data)
 
+            for elem in root.iter('foo/*/bar'):
+                dostuff(elem) # elem is at value "lol" and "heh"
         '''
-        data = self
-        for elem in path:
-            data = data.step(elem)
-        return data
+        for elem in self.iter(path):
+            yield elem._elem_valu()
 
-    def step(self, elem):
+    def _elem_iter(self):
+
+        # special case for dictionaries
+        # to iterate children and keep track
+        # of their names...
+        if type( self._d_item ) == dict:
+            for name,item in self._d_item.items():
+                yield initelem(item,name=name,parent=self)
+            return
+
+        if s_compat.isint(self._d_item):
+            return
+
+        if s_compat.isstr(self._d_item):
+            return
+
+        for i,item in enumerate(self._d_item):
+            yield initelem(item,name=str(i),parent=self)
+
+    def _elem_search(self, step):
+
+        subs = self._elem_iter()
+
+        todo = collections.deque(subs)
+        while todo:
+
+            elem = todo.popleft()
+            #print('SEARCH: %r' % (elem.name(),))
+            if elem.name() == step:
+                yield elem
+
+            for sube in elem._elem_iter():
+                todo.append(sube)
+
+    def iter(self, path):
         '''
-        Return a DataPath element for the specified child path element.
+        Iterate sub elements using the given path.
 
         Example:
 
-            item = { 'foo':[ {'bar':10},{'baz':20} ], 'hur':'dur' }
+            data = { 'foo':[ {'bar':'lol'}, {'bar':'heh'} ] }
 
-            data = DataPath(item)
-            foodata = data.step('foo')
+            root = s_datapath.initelem(data)
 
-        '''
-        return self._d_kids[elem]
-
-    def valu(self, *path):
-        '''
-        Return the value of the specified child path element.
-
-        Example:
-
-            item = { 'foo':[ {'bar':10},{'baz':20} ], 'hur':'dur' }
-
-            data = DataPath(item)
-            foodata = data.step('foo')
+            for elem in root.iter('foo/*/bar'):
+                dostuff(elem) # elem is at value "lol" and "heh"
 
         '''
-        data = self.walk(*path)
-        if data == None:
-            return None
-        return data._d_item
+        steps = self._parse_path(path)
+        if not steps:
+            return
 
-    def items(self, *path):
-        for item in self.valu(*path).items():
-            yield item
+        omax = len(steps) - 1
+        todo = collections.deque([ (self,0) ] )
 
-    def iter(self, *path):
-        '''
-        Yield DataPath instances from the given child path element.
+        while todo:
+            base,off = todo.popleft()
 
-        Example:
-            item = { 'foo':[ {'bar':10},{'baz':20} ], 'hur':'dur' }
+            step = steps[off]
 
-            data = DataPath(item)
-            for dat0 in data.iter('foo'):
-                dostuff(dat0)
+            # some special syntax for "all kids" / iterables
+            if step == '*':
 
-        '''
-        for item in self.valu(*path):
-            yield DataPath(item,parent=self)
-            
+                for elem in base._elem_iter():
+
+                    if off == omax:
+                        yield elem
+                    else:
+                        todo.append( (elem,off+1) )
+
+                continue
+
+            # special "all kids with name" syntax ~foo
+            # (including recursive kids within kids)
+            # this syntax is mostly useful XML like
+            # hierarchical data structures.
+            if step[0] == '~':
+
+                for elem in base._elem_search(step[1:]):
+
+                    if off == omax:
+                        yield elem
+                    else:
+                        todo.append( (elem,off+1) )
+
+                continue
+
+            for elem in base._elem_kids(step):
+                if off == omax:
+                    yield elem
+                else:
+                    todo.append( (elem,off+1) )
+
+    def _parse_path(self, path):
+
+        off = 0
+        steps = []
+
+        plen = len(path)
+        while off < plen:
+
+            # eat the next (or possibly a first) slash
+            _,off = s_syntax.nom(path,off,('/',))
+
+            if off >= plen:
+                break
+
+            if s_syntax.is_literal(path,off):
+                elem,off = s_syntax.parse_literal(path,off)
+                steps.append(elem)
+                continue
+
+            # eat until the next /
+            elem,off = s_syntax.meh(path,off,('/',))
+            if not elem:
+                continue
+
+            steps.append(elem)
+
+        return steps
+
+class XmlDataElem(DataElem):
+
+    def __init__(self, item, name=None, parent=None):
+        DataElem.__init__(self, item, name=name, parent=parent)
+
+    def _elem_kids(self, step):
+        #TODO possibly make step fnmatch compat?
+
+        # special case for iterating <tag> which recurses
+        # to find all instances of that element.
+        #if step[0] == '<' and step[-1] == '>':
+            #allstep = step[1:-1]
+            #todo = collections.deque(self._d_item)
+            #while todo:
+                #elem = todo.popleft()
+
+        for xmli in self._d_item:
+            if xmli.tag == step:
+                yield XmlDataElem(xmli,name=step,parent=self)
+
+    def _elem_tree(self):
+
+        todo = collections.deque([self._d_item])
+        while todo:
+
+            elem = todo.popleft()
+
+            yield elem
+
+            for sube in elem:
+                todo.append(sube)
+
+    def _elem_step(self, step):
+
+        # optional explicit syntax for dealing with colliding
+        # attributes and sub elements.
+        if step.startswith('$'):
+            item = self._d_item.attrib.get(step[1:])
+            if item == None:
+                return None
+
+            return initelem(item,name=step,parent=self)
+
+        for xmli in self._d_item:
+            if xmli.tag == step:
+                return XmlDataElem(xmli,name=step,parent=self)
+
+        item = self._d_item.attrib.get(step)
+        if item != None:
+            return initelem(item,name=step,parent=self)
+
+    def _elem_valu(self):
+        return self._d_item.text
+
+    def _elem_iter(self):
+        for item in self._d_item:
+            yield initelem(item,name=item.tag,parent=self)
+
+# Special Element Handler Classes
+elemcls = {
+    x_etree.Element:XmlDataElem,
+}
+
+def initelem(item, name=None, parent=None):
+    '''
+    Construct a new DataElem from the given item using
+    which ever DataElem class is most correct for the type.
+
+    Example:
+
+        elem = initelem(
+
+    '''
+    ecls = elemcls.get(type(item),DataElem)
+    return ecls(item,name=name,parent=parent)

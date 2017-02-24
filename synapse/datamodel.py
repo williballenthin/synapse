@@ -70,8 +70,8 @@ def parsetypes(*atypes, **kwtypes):
         def runfunc(self, *args, **kwargs):
 
             try:
-                args = [ getTypeParse(atypes[i],args[i]) for i in range(len(args)) ]
-                kwargs = { k:getTypeParse(kwtypes[k],v) for (k,v) in kwargs.items() }
+                args = [ getTypeParse(atypes[i],args[i])[0] for i in range(len(args)) ]
+                kwargs = { k:getTypeParse(kwtypes[k],v)[0] for (k,v) in kwargs.items() }
 
             except IndexError as e:
                 raise Exception('parsetypes() too many args in: %s' % (f.__name__,))
@@ -130,7 +130,7 @@ class DataModel(s_types.TypeLib):
         self.addTufoProp('syn:tag','title',defval='',ptype='str')
 
         self.addTufoForm('syn:model',ptype='syn:tag', doc='prefix for all forms within the model')
-        self.addTufoProp('syn:model','version', ptype='int', doc='version of the data model')
+        self.addTufoProp('syn:model','hash', ptype='guid', doc='version hash for the current model')
         self.addTufoProp('syn:model','prefix', ptype='syn:prop', doc='prefix used by types/forms in the model')
 
         self.addTufoForm('syn:type',ptype='syn:type')
@@ -326,46 +326,34 @@ class DataModel(s_types.TypeLib):
 
         Example:
 
-            valu = model.getPropNorm(prop,valu)
+            valu,subs = model.getPropNorm(prop,valu)
 
         '''
         dtype = self.getPropType(prop)
         if dtype == None:
-            return valu
+            return valu,{}
 
         return dtype.norm(valu,oldval=oldval)
 
     def getPropFrob(self, prop, valu, oldval=None):
         '''
-        Return a normalized system mode value for the given property.
+        Return a frobbed system mode value for the given property.
 
         Example:
 
-            valu = model.getPropNorm(prop,valu)
+            valu,subs = model.getPropFrob(prop,valu)
 
-        '''
-        dtype = self.getPropType(prop)
-        if dtype == None:
-            return valu
-
-        return dtype.frob(valu,oldval=oldval)
-
-
-    def getPropChop(self, prop, valu):
-        '''
-        Return norm,{'sub':subval} tuple for the given property.
         '''
         dtype = self.getPropType(prop)
         if dtype == None:
             return valu,{}
 
         try:
-            return dtype.chop(valu)
-        except BadTypeValu:
-            raise BadPropValu(name=prop, valu=valu)
 
-    #def getPropNorms(self, props):
-        #return { p:self.getPropNorm(p,v) for (p,v) in props.items() }
+            return dtype.frob(valu,oldval=oldval)
+
+        except BadTypeValu as e:
+            return None,{}
 
     def getPropParse(self, prop, valu):
         '''
@@ -373,7 +361,7 @@ class DataModel(s_types.TypeLib):
 
         Example:
 
-            valu = model.getPropParse(prop, text)
+            valu,subs = model.getPropParse(prop, text)
 
         '''
         dtype = self.getPropType(prop)
@@ -383,7 +371,7 @@ class DataModel(s_types.TypeLib):
         return dtype.parse(valu)
 
     def getParseProps(self, props):
-        return { p:self.getPropParse(p,v) for (p,v) in props.items() }
+        return { p:self.getPropParse(p,v)[0] for (p,v) in props.items() }
 
     def getPropDef(self, prop, glob=True):
         '''
@@ -415,7 +403,7 @@ class DataModel(s_types.TypeLib):
 
     def getPropType(self, prop):
         '''
-        Return the data model type instance for the given property, 
+        Return the data model type instance for the given property,
          or None if the data model doesn't have an entry for the property.
 
         Example:
@@ -435,7 +423,7 @@ class DataModel(s_types.TypeLib):
 
         Example:
 
-            ex = modl.getPropInfo('dns:a:fqdn','ex')
+            ex = modl.getPropInfo('inet:dns:a:fqdn','ex')
 
         '''
         pdef = self.getPropDef(prop)
