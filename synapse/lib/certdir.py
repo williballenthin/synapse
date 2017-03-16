@@ -196,6 +196,8 @@ class CertDir:
         return self.genUserCert(name, pkey=pkey, signas=signas, outp=outp)
 
     def signHostCsr(self, xcsr, signas, outp=None):
+        pkey = xcsr.get_pubkey()
+        name = xcsr.get_subject().CN
         return self.genHostCert(name, pkey=pkey, signas=signas, outp=outp)
 
     def _genPkeyCsr(self, name, mode, outp=None):
@@ -259,6 +261,16 @@ class CertDir:
 
     def getUserCaPath(self, name):
         cert = self.getUserCert(name)
+        subj = cert.get_issuer()
+
+        capath = self.getPathJoin('cas','%s.crt' % subj.CN)
+        if not os.path.isfile(capath):
+            return None
+
+        return capath
+
+    def getHostCaPath(self, name):
+        cert = self.getHostCert(name)
         subj = cert.get_issuer()
 
         capath = self.getPathJoin('cas','%s.crt' % subj.CN)

@@ -11,11 +11,16 @@ logging.basicConfig(level=logging.WARNING)
 import synapse.cortex as s_cortex
 import synapse.eventbus as s_eventbus
 
+import synapse.lib.scope as s_scope
 import synapse.lib.ingest as s_ingest
 import synapse.lib.output as s_output
 import synapse.lib.thishost as s_thishost
 
 from synapse.common import *
+
+# create the global multi-plexor *not* within a test
+# to avoid "leaked resource" when a test triggers creation
+s_scope.get('plex')
 
 class TooFewEvents(Exception):pass
 
@@ -119,6 +124,10 @@ class SynTest(unittest.TestCase):
 
     def none(self, x):
         self.assertIsNone(x)
+
+    def noprop(self, info, prop):
+        valu = info.get(prop,novalu)
+        self.eq(valu,novalu)
 
     def sorteq(self, x, y):
         return self.eq( sorted(x), sorted(y) )
